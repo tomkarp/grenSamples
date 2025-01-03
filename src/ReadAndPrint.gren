@@ -1,0 +1,64 @@
+module ReadAndPrint exposing (main)
+
+import Node
+import Stream
+import Bytes exposing (Bytes)
+import Node exposing (Environment)
+import Init
+import Task
+
+
+main : Node.Program Model Msg
+main =
+    Node.defineProgram
+        { init = init
+        , update = update
+        , subscriptions = subscriptions
+        }
+
+
+type alias Model =
+    { greeting : String
+    , environment : Environment
+    }
+
+type Msg
+    = Input String
+
+printCmd : Stream.Writable Bytes -> String -> Cmd Msg
+printCmd to s =
+    Stream.writeLineAsBytes s to
+        |> Task.onError (\_ -> Task.succeed to) 
+        |> Task.execute
+
+readCmd : Stream.Readable Bytes -> Cmd Msg
+readCmd from =
+    Stream.readBytesAsString from 
+        |> Task.onError (\_ -> Task.succeed Nothing)
+        |> Task.map (Maybe.withDefault "")
+        |> Task.perform Input
+
+init : Environment -> Init.Task { model : Model, command : Cmd Msg }
+init env =
+    let
+        defaultGreeting = "Hi "
+    in
+    Node.startProgram
+        { model = { greeting = defaultGreeting, environment = env }
+        , command = readCmd env.stdin
+        }
+
+
+update : Msg -> Model -> { model : Model, command : Cmd Msg }
+update msg model =
+    when msg is
+        Input s ->
+            { model = { model | greeting = s }
+            , command = model.greeting ++ s 
+                |> printCmd model.environment.stdout
+            }
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.none

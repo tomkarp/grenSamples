@@ -1,0 +1,109 @@
+module Guess exposing (main)
+
+import Node
+import Stream
+import Bytes exposing (Bytes)
+import Node exposing (Environment)
+import Init
+import Task
+import Random
+
+
+main : Node.Program Model Msg
+main =
+    Node.defineProgram
+        { init = init
+        , update = update
+        , subscriptions = (\_ -> Sub.none)
+        }
+
+
+type alias Model =
+    { numberToGuess : Int
+    , environment : Environment
+    }
+
+type Msg
+    = NewGuess String
+    | NewNumber Int
+
+newNumberCmd : Cmd Msg
+newNumberCmd =
+    Random.generate NewNumber (Random.int 1 100)
+
+printCmd : Stream.Writable Bytes -> String -> Cmd Msg
+printCmd to s =
+    Stream.writeLineAsBytes s to
+        |> Task.onError (\_ -> Task.succeed to) 
+        |> Task.execute
+
+readCmd : Stream.Readable Bytes -> Cmd Msg
+readCmd from =
+    Stream.readBytesAsString from 
+        |> Task.onError (\_ -> Task.succeed Nothing)
+        |> Task.map (Maybe.withDefault "")
+        |> Task.perform NewGuess
+
+init : Environment -> Init.Task { model : Model, command : Cmd Msg }
+init env =
+    Node.startProgram
+        { model = { numberToGuess = 0, environment = env }
+        , command =
+            Cmd.batch
+                [ newNumberCmd
+                , printCmd env.stdout "Guess a number between 1 and 100."
+                ]
+        }
+
+
+update : Msg -> Model -> { model : Model, command : Cmd Msg }
+update msg model =
+    when msg is
+        NewNumber n ->
+            { model = { model | numberToGuess = n
+                |> Debug.log "... if you want to cheat ..." }
+            , command = readCmd model.environment.stdin
+            }
+
+        NewGuess s ->
+            if s == "exit\n" then
+                { model = model
+                , command = printCmd model.environment.stdout "Goodbye!"
+                }
+            else
+                let
+                    guess = String.toInt (String.trim s)
+                    hint =
+                        when guess is
+                            Just n ->
+                                if n == model.numberToGuess then
+                                    "You guessed it! The number was " 
+                                        ++ String.fromInt n 
+                                        ++ ".\nNext one ... (or type 'exit' to quit)"
+                                else if n < model.numberToGuess then
+                                    "Too low!"
+                                else
+                                    "Too high!"
+                            Nothing ->
+                                "Please enter a number."
+                    finished =
+                        when guess is
+                            Just n -> n == model.numberToGuess
+                            Nothing -> False
+                in
+                if finished then 
+                { model = model
+                , command = 
+                    Cmd.batch
+                        [ printCmd model.environment.stdout hint
+                        , newNumberCmd
+                        ]
+                }
+                else
+                { model = model
+                , command = 
+                    Cmd.batch
+                        [ printCmd model.environment.stdout hint
+                        , readCmd model.environment.stdin
+                        ]
+                }

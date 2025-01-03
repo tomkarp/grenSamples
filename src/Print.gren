@@ -1,0 +1,46 @@
+module Print exposing (main)
+
+import Node
+import Stream
+import Bytes exposing (Bytes)
+import Node exposing (Environment)
+import Init
+import Task
+
+
+main : Node.Program Model msg
+main =
+    Node.defineProgram
+        { init = init
+        , update = update
+        , subscriptions = subscriptions
+        }
+
+
+type alias Model =
+    {}
+
+
+printCmd : Stream.Writable Bytes -> String -> Cmd msg
+printCmd to s =
+    Stream.writeLineAsBytes s to
+        |> Task.onError (\_ -> Task.succeed to) 
+        |> Task.execute
+
+
+init : Environment -> Init.Task { model : Model, command : Cmd msg }
+init env =
+    Node.startProgram
+        { model = {}
+        , command = printCmd env.stdout "Hello, World!"
+        }
+
+
+update : msg -> Model -> { model : Model, command : Cmd msg }
+update msg model =
+    { model = model, command = Cmd.none }
+
+
+subscriptions : Model -> Sub msg
+subscriptions model =
+    Sub.none
