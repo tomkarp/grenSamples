@@ -31,18 +31,16 @@ newNumberCmd : Cmd Msg
 newNumberCmd =
     Random.generate NewNumber (Random.int 1 100)
 
-printCmd : Stream.Writable Bytes -> String -> Cmd Msg
-printCmd to s =
+printTask : Stream.Writable Bytes -> String -> Task.Task x (Stream.Writable Bytes)
+printTask to s =
     Stream.writeLineAsBytes s to
-        |> Task.onError (\_ -> Task.succeed to) 
-        |> Task.execute
+        |> Task.onError (\_ -> Task.succeed to)
 
-readCmd : Stream.Readable Bytes -> Cmd Msg
-readCmd from =
-    Stream.readBytesAsString from 
+readTask : Stream.Readable Bytes -> Task.Task x String
+readTask from =
+    Stream.readBytesAsString from
         |> Task.onError (\_ -> Task.succeed Nothing)
         |> Task.map (Maybe.withDefault "")
-        |> Task.perform NewGuess
 
 init : Environment -> Init.Task { model : Model, command : Cmd Msg }
 init env =
@@ -51,7 +49,7 @@ init env =
         , command =
             Cmd.batch
                 [ newNumberCmd
-                , printCmd env.stdout "Guess a number between 1 and 100."
+                , printTask env.stdout "Guess a number between 1 and 100." |> Task.execute
                 ]
         }
 
@@ -62,13 +60,13 @@ update msg model =
         NewNumber n ->
             { model = { model | numberToGuess = n
                 |> Debug.log "... if you want to cheat ..." }
-            , command = readCmd model.environment.stdin
+            , command = readTask model.environment.stdin |> Task.perform NewGuess
             }
 
         NewGuess s ->
             if s == "exit\n" then
                 { model = model
-                , command = printCmd model.environment.stdout "Goodbye!"
+                , command = printTask model.environment.stdout "Goodbye!" |> Task.execute
                 }
             else
                 let
@@ -77,8 +75,8 @@ update msg model =
                         when guess is
                             Just n ->
                                 if n == model.numberToGuess then
-                                    "You guessed it! The number was " 
-                                        ++ String.fromInt n 
+                                    "You guessed it! The number was "
+                                        ++ String.fromInt n
                                         ++ ".\nNext one ... (or type 'exit' to quit)"
                                 else if n < model.numberToGuess then
                                     "Too low!"
@@ -91,19 +89,19 @@ update msg model =
                             Just n -> n == model.numberToGuess
                             Nothing -> False
                 in
-                if finished then 
+                if finished then
                 { model = model
-                , command = 
+                , command =
                     Cmd.batch
-                        [ printCmd model.environment.stdout hint
+                        [ printTask model.environment.stdout hint |> Task.execute
                         , newNumberCmd
                         ]
                 }
                 else
                 { model = model
-                , command = 
-                    Cmd.batch
-                        [ printCmd model.environment.stdout hint
-                        , readCmd model.environment.stdin
-                        ]
+                , command =
+                    printTask model.environment.stdout hint
+                    |> Task.andThen (\_ -> readTask model.environment.stdin)
+                    |> Task.perform NewGuess
+
                 }
