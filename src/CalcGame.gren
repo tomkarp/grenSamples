@@ -6,6 +6,7 @@ import Bytes exposing (Bytes)
 import Node exposing (Environment)
 import Init
 import Task
+import Time
 import Random exposing (generate, int, pair)
 
 
@@ -21,6 +22,9 @@ main =
 type alias Model =
     { number1 : Int
     , number2 : Int
+    , running : Bool
+    , timePerQuestion : Float
+    , correctAnswers : Int
     , environment : Environment
     }
 
@@ -28,6 +32,12 @@ type alias Model =
 type Msg
     = Answer String
     | NewQuestion { number1 : Int, number2 : Int }
+    | Timeout
+
+type AnswerType
+    = Correct
+    | Incorrect
+    | Invalid
 
 
 newQuestionCmd : Cmd Msg
@@ -65,7 +75,13 @@ readCmd from toMsg =
 init : Environment -> Init.Task { model : Model, command : Cmd Msg }
 init env =
     Node.startProgram
-        { model = { number1 = 0, number2 = 0, environment = env }
+        { model =
+            { number1 = 0
+            , number2 = 0
+            , running = False
+            , timePerQuestion = 5000
+            , correctAnswers = 0
+            , environment = env }
         , command = newQuestionCmd
         }
 
@@ -74,20 +90,39 @@ update : Msg -> Model -> { model : Model, command : Cmd Msg }
 update msg model =
     when msg is
         Answer s ->
-            { model = model
-            , command =
-                when String.toInt (String.trim s) is
+            let
+                answer = when String.toInt (String.trim s) is
                     Just n ->
                         if model.number1 + model.number2 == n then
-                            newQuestionCmd
+                            Correct
                         else
-                            printAndReadCmd
-                                model.environment.stdout
-                                "No!"
-                                model.environment.stdin
-                                Answer
+                            Incorrect
 
                     Nothing ->
+                        Invalid
+            in
+            { model =
+                if answer == Correct then
+                    { model
+                        | running = False
+                        , timePerQuestion = model.timePerQuestion - 100 |> Debug.log "timePerQuestion"
+                        , correctAnswers = model.correctAnswers + 1
+                    }
+                else
+                    model
+            , command =
+                when answer is
+                    Correct ->
+                        newQuestionCmd
+
+                    Incorrect ->
+                        printAndReadCmd
+                            model.environment.stdout
+                            "No!"
+                            model.environment.stdin
+                            Answer
+
+                    Invalid ->
                         printAndReadCmd
                             model.environment.stdout
                             "Not a valid number!"
@@ -96,7 +131,7 @@ update msg model =
             }
 
         NewQuestion { number1, number2 } ->
-            { model = { model | number1 = number1, number2 = number2 }
+            { model = { model | number1 = number1, number2 = number2, running = True }
             , command =
                 printAndReadCmd
                     model.environment.stdout
@@ -105,7 +140,19 @@ update msg model =
                     Answer
             }
 
+        Timeout ->
+            { model = { model | running = False }
+            , command =
+                Stream.writeLineAsBytes "Timeout!" model.environment.stdout
+                    |> Task.andThen (\_ -> Stream.writeLineAsBytes ("You answered " ++ String.fromInt model.correctAnswers ++ " questions correctly.") model.environment.stdout)
+                    |> Task.onError (\_ -> Task.succeed model.environment.stdout)
+                    |> Task.andThen (\_ -> Node.exit) |> Task.execute
+            }
+
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    if model.running then
+        Time.every model.timePerQuestion (\_ -> Timeout)
+    else
+        Sub.none
