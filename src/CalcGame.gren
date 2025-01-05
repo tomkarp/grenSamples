@@ -1,0 +1,114 @@
+module CalcGame exposing (main)
+
+import Node
+import Stream
+import Bytes exposing (Bytes)
+import Node exposing (Environment)
+import Init
+import Task
+import Random exposing (generate, int, pair)
+
+
+main : Node.Program Model Msg
+main =
+    Node.defineProgram
+        { init = init
+        , update = update
+        , subscriptions = subscriptions
+        }
+
+
+type alias Model =
+    { number1 : Int
+    , number2 : Int
+    , environment : Environment
+    }
+
+
+type Msg
+    = Answer String
+    | NewQuestion { number1 : Int, number2 : Int }
+
+
+newQuestionCmd : Cmd Msg
+newQuestionCmd =
+    Random.generate
+        (\{first, second} -> NewQuestion { number1 = first, number2 = second })
+        ( Random.pair (Random.int 1 10) (Random.int 1 10) )
+
+
+printAndReadCmd : Stream.Writable Bytes -> String -> Stream.Readable Bytes -> (String -> Msg) -> Cmd Msg
+printAndReadCmd to s from toMsg =
+    Stream.writeLineAsBytes s to
+    |> Task.onError (\_ -> Task.succeed to)
+    |> Task.andThen (\_ -> Stream.readBytesAsString from)
+    |> Task.onError (\_ -> Task.succeed Nothing)
+    |> Task.map (Maybe.withDefault "")
+    |> Task.perform toMsg
+
+
+printCmd : Stream.Writable Bytes -> String -> Cmd Msg
+printCmd to s =
+    Stream.writeLineAsBytes s to
+        |> Task.onError (\_ -> Task.succeed to)
+        |> Task.execute
+
+
+readCmd : Stream.Readable Bytes -> (String -> Msg) -> Cmd Msg
+readCmd from toMsg =
+    Stream.readBytesAsString from
+        |> Task.onError (\_ -> Task.succeed Nothing)
+        |> Task.map (Maybe.withDefault "")
+        |> Task.perform toMsg
+
+
+init : Environment -> Init.Task { model : Model, command : Cmd Msg }
+init env =
+    Node.startProgram
+        { model = { number1 = 0, number2 = 0, environment = env }
+        , command = newQuestionCmd
+        }
+
+
+update : Msg -> Model -> { model : Model, command : Cmd Msg }
+update msg model =
+    when msg is
+        Answer s ->
+            { model = model
+            , command =
+                when String.toInt (String.trim s) is
+                    Just n ->
+                        if model.number1 + model.number2 == n then
+                            Cmd.batch
+                                [ printCmd model.environment.stdout "Yes!"
+                                , newQuestionCmd
+                                ]
+                        else
+                            printAndReadCmd
+                                model.environment.stdout
+                                "No!"
+                                model.environment.stdin
+                                Answer
+
+                    Nothing ->
+                        printAndReadCmd
+                            model.environment.stdout
+                            "Not a valid number!"
+                            model.environment.stdin
+                            Answer
+            }
+
+        NewQuestion { number1, number2 } ->
+            { model = { model | number1 = number1, number2 = number2 } |> Debug.log "NewQuestion"
+            , command =
+                printAndReadCmd
+                    model.environment.stdout
+                    (String.fromInt number1 ++ " + " ++ String.fromInt number2 ++ " = ")
+                    model.environment.stdin
+                    Answer
+            }
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.none
