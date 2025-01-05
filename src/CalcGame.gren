@@ -79,10 +79,7 @@ update msg model =
                 when String.toInt (String.trim s) is
                     Just n ->
                         if model.number1 + model.number2 == n then
-                            Cmd.batch
-                                [ printCmd model.environment.stdout "Yes!"
-                                , newQuestionCmd
-                                ]
+                            newQuestionCmd
                         else
                             printAndReadCmd
                                 model.environment.stdout
@@ -99,7 +96,7 @@ update msg model =
             }
 
         NewQuestion { number1, number2 } ->
-            { model = { model | number1 = number1, number2 = number2 } |> Debug.log "NewQuestion"
+            { model = { model | number1 = number1, number2 = number2 }
             , command =
                 printAndReadCmd
                     model.environment.stdout
