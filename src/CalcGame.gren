@@ -105,7 +105,7 @@ update msg model =
                 if answer == Correct then
                     { model
                         | running = False
-                        , timePerQuestion = model.timePerQuestion - 100 |> Debug.log "timePerQuestion"
+                        , timePerQuestion = model.timePerQuestion * 0.95
                         , correctAnswers = model.correctAnswers + 1
                     }
                 else
